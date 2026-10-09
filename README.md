@@ -88,7 +88,10 @@ requests 3–10 ms.
 
 ## Tests
 
-`mix test` runs the adapter against v1/v2/ALB fixtures and routers end to end
-through `Mayfly.LocalRuntime`, including streaming. No AWS account needed.
+`mix test` runs the adapter against v1/v2/ALB fixtures, a `Plug.Router` and a
+real Phoenix 1.8 endpoint (`test/support/phoenix_app.ex`: controllers,
+`Plug.Parsers`, `RenderErrors` 404/406/500, cookie sessions across
+invocations, `Plug.Head`, streaming from a controller) end to end through
+`Mayfly.LocalRuntime`. No AWS account needed.
 
 MIT. Part of the Mayfly project by [Karrer](https://karrer.solutions).
