@@ -140,15 +140,11 @@ defmodule Mayfly.Plug.Handler do
   defp run_streaming(event, ctx, state) do
     conn = Adapter.conn(event, ctx, [sink: self()] ++ adapter_opts(state))
     req = conn.private.mayfly_request
-    parent = self()
     plug = state.plug
     plug_opts = state.plug_opts
 
     {pid, mon} =
-      spawn_monitor(fn ->
-        plug.call(conn, plug_opts)
-        send(parent, {:mayfly_plug, :done, self()})
-      end)
+      spawn_monitor(fn -> plug.call(conn, plug_opts) end)
 
     receive do
       {:mayfly_plug, {:response, %{status: status, headers: headers, body: body}}, ^pid} ->
@@ -158,8 +154,7 @@ defmodule Mayfly.Plug.Handler do
       {:mayfly_plug, {:chunked, status, headers}, ^pid} ->
         {:ok, streamed(chunk_stream(pid, mon), status, headers)}
 
-      {:mayfly_plug, :done, ^pid} ->
-        Process.demonitor(mon, [:flush])
+      {:DOWN, ^mon, :process, ^pid, :normal} ->
         no_response()
 
       {:DOWN, ^mon, :process, ^pid, reason} ->
@@ -186,10 +181,6 @@ defmodule Mayfly.Plug.Handler do
             {:mayfly_plug, :chunk, ref, ^pid, data} ->
               send(pid, {:mayfly_plug, :ack, ref})
               {[data], :open}
-
-            {:mayfly_plug, :done, ^pid} ->
-              Process.demonitor(mon, [:flush])
-              {:halt, :closed}
 
             {:DOWN, ^mon, :process, ^pid, :normal} ->
               {:halt, :closed}
