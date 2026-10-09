@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Test suite now runs a real Phoenix 1.8 endpoint (`test/support/phoenix_app.ex`, phoenix as a
+  test-only dependency): controller actions with the Lambda context, `Plug.Parsers`, Phoenix
+  404/406/500 rendering through `RenderErrors`, cookie sessions across invocations, `Plug.Head`,
+  `on_error: :propagate`, and `send_chunked` streaming from a controller.
+
 ## [0.1.0] - 2026-10-09
 
 ### Added

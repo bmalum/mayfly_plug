@@ -30,6 +30,8 @@ defmodule Mayfly.Plug.MixProject do
       mayfly_dep(),
       {:plug, "~> 1.15"},
       {:telemetry, "~> 1.0", optional: true},
+      # A real Phoenix endpoint in test/support exercises RenderErrors, Parsers and sessions.
+      {:phoenix, "~> 1.8", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
