@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+- Streaming mode: the conn is now built inside the plug process so Plug's
+  `{:plug_conn, :sent}` reaches `Plug.ErrorHandler` / Phoenix `RenderErrors`;
+  a controller raising after `send_chunked` no longer renders a stray 500 body.
+  Mid-stream failures are reported through the response trailers.
+- `on_error: :propagate` is honoured when the plug raises after `send_resp`.
+- The handler process no longer leaks `{:plug_conn, :sent}` messages between
+  invocations, and recovered responses are matched to the plug process that sent them.
+- Consumer-side stream errors (`send_timeout`, socket closed) stop the plug
+  process instead of leaving it blocked in `chunk/2`.
+- ALB `remote_ip` uses the last `X-Forwarded-For` hop (the one the load balancer
+  saw); the first entry is client-controlled.
+- `x-forwarded-proto` only accepts `http`/`https`; `x-forwarded-port` is parsed
+  defensively; base64 bodies without padding are tolerated.
+- `mayfly` is a Hex dependency by default (`MAYFLY_PATH` for local development).
+
 ### Added
 - Test suite now runs a real Phoenix 1.8 endpoint (`test/support/phoenix_app.ex`, phoenix as a
   test-only dependency): controller actions with the Lambda context, `Plug.Parsers`, Phoenix

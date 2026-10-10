@@ -37,15 +37,12 @@ defmodule Mayfly.Plug.MixProject do
     ]
   end
 
-  # Development uses the sibling checkout (or MAYFLY_PATH); the published package
-  # depends on the Hex release. MAYFLY_HEX=1 forces the Hex dependency locally.
+  # Hex release by default. Set MAYFLY_PATH=/path/to/mayfly to develop against a
+  # local checkout (CI does this until mayfly itself is on Hex).
   defp mayfly_dep do
-    path = System.get_env("MAYFLY_PATH", "../mayfly")
-
-    if System.get_env("MAYFLY_HEX") == nil and File.dir?(path) do
-      {:mayfly, path: path}
-    else
-      {:mayfly, "~> 1.0.0-rc"}
+    case System.get_env("MAYFLY_PATH") do
+      nil -> {:mayfly, "~> 1.0.0-rc"}
+      path -> {:mayfly, path: path}
     end
   end
 

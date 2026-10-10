@@ -76,7 +76,8 @@ defmodule Mayfly.Plug.AdapterTest do
     test "x-forwarded-* drive scheme/port/ip; encoded query is kept verbatim; binary body decoded" do
       conn = Adapter.conn(Fixtures.alb(), @ctx)
       assert conn.scheme == :http and conn.port == 80 and conn.host == "alb.example.com"
-      assert conn.remote_ip == {192, 0, 2, 1}
+      # last X-Forwarded-For hop: the address the load balancer itself saw
+      assert conn.remote_ip == {10, 0, 0, 2}
       assert Plug.Conn.fetch_query_params(conn).query_params == %{"v" => "1", "name" => "a b"}
       assert {:ok, <<0, 1, 2, 255>>, _} = Plug.Conn.read_body(conn)
     end

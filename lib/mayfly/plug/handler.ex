@@ -110,8 +110,10 @@ defmodule Mayfly.Plug.Handler do
   # -- buffered ------------------------------------------------------------------------
 
   defp run_buffered(event, ctx, state) do
+    drain()
     conn = Adapter.conn(event, ctx, adapter_opts(state))
     req = conn.private.mayfly_request
+    me = self()
 
     try do
       conn = state.plug.call(conn, state.plug_opts)
@@ -123,8 +125,9 @@ defmodule Mayfly.Plug.Handler do
       end
     rescue
       e ->
-        case {sent_response(), state.on_error} do
+        case {sent_response(me), state.on_error} do
           {%{} = response, :respond} ->
+            drain()
             log_after_send(e, __STACKTRACE__)
             {:ok, Adapter.to_proxy(req, response, binary_types(state))}
 
@@ -137,39 +140,53 @@ defmodule Mayfly.Plug.Handler do
 
   # -- streaming -----------------------------------------------------------------------
 
+  # The conn is built *inside* the plug process so that it owns it: Plug sends
+  # {:plug_conn, :sent} to the conn's owner and error handlers look for that
+  # message in their own mailbox. The handler process is the sink that receives
+  # response/chunk notifications and turns them into a Mayfly.Response stream.
   defp run_streaming(event, ctx, state) do
-    conn = Adapter.conn(event, ctx, [sink: self()] ++ adapter_opts(state))
-    req = conn.private.mayfly_request
+    drain()
+    sink = self()
+    req = Mayfly.Events.HTTP.decode(event)
     plug = state.plug
     plug_opts = state.plug_opts
+    opts = [sink: sink] ++ adapter_opts(state)
 
     {pid, mon} =
-      spawn_monitor(fn -> plug.call(conn, plug_opts) end)
+      spawn_monitor(fn ->
+        conn = Adapter.conn(req, ctx, opts)
+        plug.call(conn, plug_opts)
+      end)
 
     receive do
       {:mayfly_plug, {:response, %{status: status, headers: headers, body: body}}, ^pid} ->
-        Process.demonitor(mon, [:flush])
-        {:ok, streamed([body], status, headers)}
+        # Wait for the plug to finish so a raise-after-send can still honour
+        # on_error: :propagate (the response itself is complete already).
+        receive do
+          {:DOWN, ^mon, :process, ^pid, :normal} ->
+            {:ok, streamed([body], status, headers)}
+
+          {:DOWN, ^mon, :process, ^pid, reason} ->
+            if state.on_error == :propagate do
+              exit_with(reason)
+            else
+              log_after_send(reason)
+              {:ok, streamed([body], status, headers)}
+            end
+        end
 
       {:mayfly_plug, {:chunked, status, headers}, ^pid} ->
-        {:ok, streamed(chunk_stream(pid, mon), status, headers)}
+        {:ok, streamed(chunk_stream(pid, mon, state.on_error), status, headers)}
 
       {:DOWN, ^mon, :process, ^pid, :normal} ->
         no_response()
 
       {:DOWN, ^mon, :process, ^pid, reason} ->
-        case {sent_response(), state.on_error} do
-          {%{} = response, :respond} ->
-            log_after_send(reason)
-            {:ok, Adapter.to_proxy(req, response, binary_types(state))}
-
-          _ ->
-            exit_with(reason)
-        end
+        exit_with(reason)
     end
   end
 
-  defp chunk_stream(pid, mon) do
+  defp chunk_stream(pid, mon, on_error) do
     Stream.resource(
       fn -> :open end,
       fn
@@ -182,14 +199,31 @@ defmodule Mayfly.Plug.Handler do
               send(pid, {:mayfly_plug, :ack, ref})
               {[data], :open}
 
+            # A plug that calls send_resp after send_chunked is a bug; ignore the late response.
+            {:mayfly_plug, {:response, _}, ^pid} ->
+              {[], :open}
+
             {:DOWN, ^mon, :process, ^pid, :normal} ->
               {:halt, :closed}
 
             {:DOWN, ^mon, :process, ^pid, reason} ->
+              # Mid-stream failure: the chunks already sent cannot be taken back;
+              # raising here makes Mayfly report the error through the response
+              # trailers, the only channel left at this point.
+              _ = on_error
               exit_with(reason)
           end
       end,
-      fn _ -> :ok end
+      fn
+        # Consumer gave up (socket error, send_timeout): stop the producer too,
+        # otherwise it blocks in chunk/2 until its own send_timeout.
+        :open ->
+          Process.demonitor(mon, [:flush])
+          Process.exit(pid, :kill)
+
+        _ ->
+          :ok
+      end
     )
   end
 
@@ -227,10 +261,10 @@ defmodule Mayfly.Plug.Handler do
      }}
   end
 
-  # The last response the adapter reported to us, if any.
-  defp sent_response do
+  # The last response the adapter reported for this plug process, if any.
+  defp sent_response(pid) do
     receive do
-      {:mayfly_plug, {:response, response}, _} -> sent_response() || response
+      {:mayfly_plug, {:response, response}, ^pid} -> sent_response(pid) || response
     after
       0 -> nil
     end

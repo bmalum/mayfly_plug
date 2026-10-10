@@ -131,4 +131,25 @@ defmodule Mayfly.Plug.PhoenixTest do
     resp = invoke(rt, Fixtures.v1(%{"path" => "/api/hello"}))
     assert resp["statusCode"] == 406
   end
+
+  test "streaming: Phoenix raising after a chunk does not render a second response; error via trailers" do
+    rt = start_runtime("Mayfly.Plug.PhoenixStreamingHandler")
+
+    assert {:ok, %{body: body, trailers: trailers}} =
+             LocalRuntime.invoke(rt, get("/api/stream-boom"))
+
+    [prelude, payload] = String.split(body, <<0, 0, 0, 0, 0, 0, 0, 0>>)
+    assert %{"statusCode" => 200} = JSON.decode!(prelude)
+    # RenderErrors saw {:plug_conn, :sent} in the plug process and did NOT emit a 500 body
+    assert payload == "partial\n"
+    assert trailers["lambda-runtime-function-error-type"] =~ "RuntimeError"
+  end
+
+  test "buffered: the poller mailbox is clean after a rendered Phoenix 500" do
+    rt = start_runtime("Mayfly.Plug.PhoenixHandler")
+    resp = invoke(rt, get("/api/boom"))
+    assert resp["statusCode"] == 500
+    resp = invoke(rt, get("/api/hello"))
+    assert resp["statusCode"] == 200
+  end
 end

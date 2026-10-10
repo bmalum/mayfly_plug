@@ -277,14 +277,14 @@ defmodule Mayfly.Plug.Adapter do
   # The owner (the process that built the conn) gets Plug's :sent notice; the
   # sink (streaming) or, failing that, the owner gets the response itself so the
   # handler can recover it when the plug raises after sending.
-  defp notify(%{owner: owner, sink: nil}, message) do
+  # The owner (the process that built the conn, i.e. the one running the plug)
+  # always gets Plug's {:plug_conn, :sent}: Plug.ErrorHandler and Phoenix's
+  # RenderErrors look for it to decide whether a response was already sent.
+  # The handler (owner in buffered mode, sink in streaming mode) gets the
+  # response itself so it can recover it when the plug raises after sending.
+  defp notify(%{owner: owner, sink: sink}, message) do
     send(owner, {:plug_conn, :sent})
-    send(owner, {:mayfly_plug, message, self()})
-    :ok
-  end
-
-  defp notify(%{sink: sink}, message) do
-    send(sink, {:mayfly_plug, message, self()})
+    send(sink || owner, {:mayfly_plug, message, self()})
     :ok
   end
 
@@ -305,18 +305,36 @@ defmodule Mayfly.Plug.Adapter do
 
   defp raw_body(%Request{raw: raw, is_base64: b64}) do
     case raw["body"] do
-      nil -> ""
-      body when b64 -> Base.decode64!(body)
-      body -> body
+      nil ->
+        ""
+
+      body when b64 ->
+        # Tolerate missing padding; an undecodable body is passed through raw.
+        case Base.decode64(body, padding: false) do
+          {:ok, bin} -> bin
+          :error -> body
+        end
+
+      body ->
+        body
     end
   end
 
-  defp scheme(%Request{headers: h}), do: h["x-forwarded-proto"] || "https"
+  # Only http/https are meaningful (and String.to_atom on a client header would
+  # otherwise create arbitrary atoms).
+  defp scheme(%Request{headers: h}) do
+    case h["x-forwarded-proto"] do
+      "http" -> "http"
+      _ -> "https"
+    end
+  end
 
   defp port(%Request{headers: h} = req) do
+    default = if scheme(req) == "http", do: 80, else: 443
+
     case h["x-forwarded-port"] do
-      nil -> if scheme(req) == "http", do: 80, else: 443
-      p -> String.to_integer(p)
+      nil -> default
+      p -> with({n, ""} when n in 1..65_535 <- Integer.parse(p), do: n, else: (_ -> default))
     end
   end
 
@@ -348,7 +366,10 @@ defmodule Mayfly.Plug.Adapter do
   defp remote_ip(nil), do: {0, 0, 0, 0}
 
   defp remote_ip(ip) when is_binary(ip) do
-    first = ip |> String.split(",") |> hd() |> String.trim()
+    # Mayfly.Events.HTTP already resolves source_ip (ALB: last X-Forwarded-For
+    # hop, the one the load balancer saw). If a list still arrives, the last
+    # entry is the trustworthy one; earlier ones are client-supplied.
+    first = ip |> String.split(",") |> List.last() |> String.trim()
 
     case :inet.parse_address(String.to_charlist(first)) do
       {:ok, addr} -> addr

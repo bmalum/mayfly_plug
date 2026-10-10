@@ -42,6 +42,13 @@ defmodule Mayfly.Plug.PhoenixApp.HelloController do
 
   def boom(_conn, _params), do: raise("phoenix failure")
 
+  def stream_boom(conn, _params) do
+    conn = conn |> put_resp_content_type("text/plain") |> send_chunked(200)
+    {:ok, conn} = chunk(conn, "partial\n")
+    _ = conn
+    raise "after chunk"
+  end
+
   def not_found(_conn, _params),
     do:
       raise(Phoenix.Router.NoRouteError,
@@ -65,6 +72,7 @@ defmodule Mayfly.Plug.PhoenixApp.Router do
     post("/items", HelloController, :create)
     get("/count", HelloController, :count)
     get("/stream", HelloController, :stream)
+    get("/stream-boom", HelloController, :stream_boom)
     get("/boom", HelloController, :boom)
   end
 end
