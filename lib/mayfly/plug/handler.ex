@@ -33,7 +33,9 @@ defmodule Mayfly.Plug.Handler do
       client and logs the exception, like Cowboy and Bandit do. `:propagate`
       re-raises instead, so Lambda records a function error and the client
       gets the integration's generic 502. Exceptions raised before any
-      response is sent always propagate.
+      response is sent always propagate. In streaming mode an exception after
+      the first chunk is always reported through the response trailers
+      (the chunks already sent cannot be withdrawn), regardless of `:on_error`.
     * `:binary_types` – content-type prefixes whose bodies are base64-encoded;
       see `Mayfly.Plug.Adapter`
 
